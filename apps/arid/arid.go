@@ -1,9 +1,9 @@
 package main
 
 import (
-	"github.com/argpass/go-runner/runner"
+	"github.com/argpass/go-ari/ari"
 	"syscall"
-	_ "github.com/argpass/ari/plugins"
+	_ "github.com/argpass/go-ari/plugins"
 )
 
 type program struct {
@@ -24,5 +24,5 @@ func (p *program) Stop() (error) {
 
 func main()  {
 	p := &program{}
-	runner.Run(p, syscall.SIGINT, syscall.SIGTERM)
+	ari.Run(p, syscall.SIGINT, syscall.SIGTERM)
 }
