@@ -2,7 +2,7 @@ package ari
 
 type Message struct {
 	// doneChan is used to send SYN to message sender
-	doneChan    chan <-int
+	DoneChan    chan <-int
 
 	serialNo    uint32
 
@@ -15,7 +15,7 @@ type Message struct {
 func NewMessage(doneChan chan <-int, serialNo uint32,
 		messageType []byte, body []byte, tags[][]byte) *Message {
 	m := &Message{
-		doneChan:doneChan,
+		DoneChan:doneChan,
 		serialNo:serialNo,
 		MessageType:messageType,
 		Body:body,
@@ -43,8 +43,8 @@ func (m *Message) GetTerm(key []byte) (value []byte, ok bool)  {
 
 // Done mark message finished
 func (m *Message) Done()  {
-	if m.doneChan != nil {
-		close(m.doneChan)
-		m.doneChan = nil
+	if m.DoneChan != nil {
+		close(m.DoneChan)
+		m.DoneChan = nil
 	}
 }

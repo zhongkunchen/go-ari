@@ -47,4 +47,5 @@ type BeaterCreator interface {
 // Beater produces log messages, and sends them to the `Ari`
 type Beater interface {
 	Beating()
+	Stop()
 }

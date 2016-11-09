@@ -85,7 +85,7 @@ func (f *filterWorker) handle(msg *Message) bool {
 	for _, filter := range f.filters {
 		if next := filter.Handle(msg); !next {
 			// never to continue, send response to the sender
-			close(msg.doneChan)
+			close(msg.DoneChan)
 			return false
 		}
 	}
