@@ -8,13 +8,13 @@ import (
 
 type Ari struct {
 	sync.RWMutex
-	waitGroup WaitGroupWrapper
+	waitGroup   WaitWrapper
 
-	option atomic.Value
-	conf Config
+	option      atomic.Value
+	conf        Config
 
 	runningChan chan int
-	isRunning int32
+	isRunning   int32
 
 	// messageChan receives log messages from log producer
 	// filter workers receives log messages from messageChan

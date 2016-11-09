@@ -5,15 +5,15 @@ import (
 	"bytes"
 )
 
-type WaitGroupWrapper struct {
+type WaitWrapper struct {
 	sync.WaitGroup
 }
 
-func (p *WaitGroupWrapper) Add (fn func()) {
+func (p *WaitWrapper) Add (fn func()) {
 	p.WaitGroup.Add(1)
 	go func(){
+		defer p.WaitGroup.Done()
 		fn()
-		p.WaitGroup.Done()
 	}()
 }
 
