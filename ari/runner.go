@@ -25,7 +25,7 @@ func Run(service Service, sigs ...os.Signal)(err error){
 	if err = service.Start(); err != nil {
 		return err
 	}
-	ch := make(chan <-os.Signal, 1)
+	ch := make(chan os.Signal, 1)
 	signalNotify(ch, sigs...)
 	<-ch
 	return service.Stop()

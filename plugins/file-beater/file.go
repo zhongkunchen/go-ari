@@ -14,29 +14,45 @@ import (
 	"fmt"
 )
 
+// Options
+// Example:
+//
+//{
+//  "paths": ["/var/log/*.log", "/var/log/*.log1"],
+//  "start_position": "beginning",
+//  "tags": ["gateway", "server#1"],
+//  "codec": {
+//    "multiline": {
+//      "token": "\\["
+//    }
+//  }
+//}
 type Options struct {
-	conf         ari.Configuration
-
+	Tags 		[]string
 	// Paths are target files paths(blob format)
-	Paths        []string
-	MaxBlockSize uint
+	Paths        	[]string
+	MaxBlockSize 	uint
 
 	// StartPos is the file offset to start
 	// -1 means start at the end
 	// now it only can be set as 0 or -1
 	StartPos     int
+	CodecOption map[string]interface{}
 }
 
 func NewOptions(conf ari.Configuration) (opts *Options, err error) {
 	defer func(){
 		if e := recover(); e != nil {
-			return nil, fmt.Errorf("invalid config, err:%v", e)
+			opts, err = nil, fmt.Errorf("invalid config, err:%v", e)
 		}
 	}()
 	opts = &Options{
-		conf:conf,
 		MaxBlockSize:1024 * 32,
 		StartPos:-1,
+	}
+	var ok bool
+	if opts.CodecOption, ok = conf["codec"]; !ok {
+		return nil, errors.New("expect `codec` conf")
 	}
 	// resolve start position
 	start, err := conf.GetString("start_position")
@@ -53,16 +69,16 @@ func NewOptions(conf ari.Configuration) (opts *Options, err error) {
 	if paths, exists := conf["paths"]; exists {
 		if ps, ok := paths.([]interface{}); ok {
 			if opts.Paths == nil {
-				opts.Paths = make([]string, len(paths))
+				opts.Paths = make([]string, len(ps))
 			}
 			for _, p := range ps {
 				opts.Paths = append(opts.Paths, p.(string))
 			}
 		}else{
-			return errors.New("expect slice paths type")
+			return nil, errors.New("expect slice paths type")
 		}
 	}else{
-		return errors.New("need paths config")
+		return nil, errors.New("need paths config")
 	}
 	err = nil
 	return opts,  err
@@ -72,12 +88,14 @@ func NewOptions(conf ari.Configuration) (opts *Options, err error) {
 // and sends messages to `messageChan`.
 // a `FileBeater` only watches one log file.
 type FileBeater struct {
+	runner       *BeaterRunner
 
 	SendChan     chan <- *ari.Message
 	Logger       *log.Logger
+	Codec        Codec
 
 	readFile     *os.File
-	reader       *io.Reader
+	reader       *bufio.Reader
 	readFileName string
 	readPos      uint64
 	sentCnt      uint64
@@ -89,12 +107,14 @@ type FileBeater struct {
 	StartPos     int
 	MaxBlockSize uint
 	FilePath     string
-	Codec
+	undelivered  []*ari.Message
 }
 
-func NewFileBeater(path string, startPos int, maxBlockSize uint,
-	sendChan chan <- *ari.Message, logger *log.Logger) *FileBeater {
+func NewFileBeater(runner *BeaterRunner, path string, startPos int, maxBlockSize uint,
+	sendChan chan <- *ari.Message, logger *log.Logger, codec Codec) *FileBeater {
 	f := &FileBeater{
+		runner:runner,
+		Codec:codec,
 		StartPos:startPos,
 		MaxBlockSize:maxBlockSize,
 		FilePath:path,
@@ -151,17 +171,15 @@ func (f *FileBeater) readOne() ([]byte, error) {
 	return data, nil
 }
 
-// todo: WaitOneMessage reads one log message
+// WaitOneMSG todo: WaitOneMessage reads one log message
 func (f *FileBeater) WaitOneMSG() (msg *ari.Message, err error) {
 	var block []byte
-	var pending [][]byte
 	for {
 		block, err = f.readOne()
 		if err != nil {
 			return msg, err
 		}
-
-		pending = append(pending, block)
+		for _, msg f.Codec.NextLogs(block)
 	}
 }
 
@@ -240,15 +258,28 @@ func NewBeaterRunner(conf ari.Configuration,
 	return fb, nil
 }
 
+func (r *BeaterRunner) EncodeMSG(body []byte) *ari.Message {
+	m := &ari.Message{
+		r.options
+	}
+	return m
+}
+
+func (r *BeaterRunner) Fatal(err error)  {
+	r.Logger.Errorf("got err:%v", err)
+	runtime.Goexit()
+}
+
 // Beating method bootstraps all beaters
 func (r *BeaterRunner) Beating()  {
+	var err error
 	// paths set
 	paths := map[string]interface{}{}
 	// resolve paths with glob patterns
 	for _, pathPattern := range r.options.Paths {
 		matches, err := filepath.Glob(pathPattern)
 		if err != nil {
-			for p:=range matches {
+			for _, p:=range matches {
 				paths[p] = nil
 			}
 		}
@@ -259,15 +290,45 @@ func (r *BeaterRunner) Beating()  {
 		r.beaters = make([]*FileBeater, len(paths))
 	}
 	r.Logger.Debugf("[FBR]is to start %d beaters", len(paths))
+	// pickup one codec config
+	var codecName string
+	var codecOpts map[string]interface{}
+	for name, codecOpts := range r.options.CodecOption {
+		codecName, codecOpts = name, codecOpts
+		break
+	}
+	// create beaters
 	for path, _ := range paths {
-		beater := NewFileBeater(path, r.options.StartPos,
-			r.options.MaxBlockSize, r.sendChan, r.Logger)
+		// every beater has its own codec
+		var codec Codec;
+		codec, err = resolveCodec(codecName, codecOpts)
+		if err != nil {
+			r.Fatal(err)
+		}
+		break
+		beater := NewFileBeater(r, path, r.options.StartPos,
+			r.options.MaxBlockSize, r.sendChan, r.Logger, codec)
 		r.beaters = append(r.beaters, beater)
+	}
+
+	// bootstrap all beaters
+	for _, beater := range r.beaters {
 		r.group.Add(func(){
 			// bootstrap the beater
 			beater.Beating()
 		})
 	}
+}
+
+func resolveCodec(name string, codecOpts map[string]interface{}) (Codec, error) {
+	if name == "multiline" {
+		pattern, ok := codecOpts["token"];
+		if !ok {
+			return nil, errors.New("multiline codec expects `token` conf")
+		}
+		return NewMultiLineCodec(pattern), nil
+	}
+	return nil, fmt.Errorf("unsupportted codec %s", name)
 }
 
 // Stop method notifies all `SingleFileBeater` to stop

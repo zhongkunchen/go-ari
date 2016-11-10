@@ -1,34 +1,35 @@
 package filebeater
 
 import (
-	"github.com/argpass/go-ari/ari"
 	"bytes"
 	"regexp"
 	"sort"
 )
 
+// Codec is used to scan logs from byte slice
 type Codec interface {
-	NextMessages([]byte) (msgs []*ari.Message)
+	NextLogs([]byte) (logs [][]byte)
 }
 
-// MessageFrom wraps a `Message` from []byte
-func MessageFrom(bs []byte) *ari.Message  {
+func copyFrom(bs []byte) []byte{
 	if len(bs) == 0 {
 		return nil
 	}
 	body := make([]byte, len(bs))
 	copy(body, bs)
-	msg := &ari.Message{Body:body}
-	return msg
+	return body
 }
 
 var _ Codec = &MultiLineCodec{}
 
+// MultiLineCodec is a codec to parse multi lines byte stream
 type MultiLineCodec struct {
 	tokenReg *regexp.Regexp
 	buf *bytes.Buffer
 }
 
+// NewMultiLineCodec creates a new `MultiLineCodec` instance
+// with the every regexp `pattern`
 func NewMultiLineCodec(pattern string) (*MultiLineCodec, error) {
 	reg, err := regexp.Compile(pattern)
 	if err != nil {
@@ -38,22 +39,25 @@ func NewMultiLineCodec(pattern string) (*MultiLineCodec, error) {
 		tokenReg: reg,
 		buf: bytes.NewBuffer(make([]byte, 1024 * 64)),
 	}
-	return c
+	c.buf.Reset()
+	return c, nil
 }
 
-func (c *MultiLineCodec) Done() *ari.Message {
+// Done wraps pending bytes as a log []byte
+func (c *MultiLineCodec) Done() []byte{
 	defer c.buf.Reset()
 	if c.buf.Len() != 0 {
-		return MessageFrom(c.buf.Bytes())
+		return copyFrom(c.buf.Bytes())
 	}
 	return nil
 }
 
-func (c *MultiLineCodec) NextMessages(bs []byte) (msgs []*ari.Message) {
+// NextLogs scans logs bytes from codec buf and the arg bs
+func (c *MultiLineCodec) NextLogs(bs []byte) (logs [][]byte) {
 	if bs == nil {
 		return nil
 	}
-	matches := c.tokenReg.FindAllIndex(bs, 0)
+	matches := c.tokenReg.FindAllIndex(bs, -1)
 	if matches == nil {
 		c.buf.Write(bs)
 		return nil
@@ -67,7 +71,7 @@ func (c *MultiLineCodec) NextMessages(bs []byte) (msgs []*ari.Message) {
 	}
 	// sort indices in increasing order
 	sort.Ints(indices)
-	msgs = make([]*ari.Message, len(indices))
+	logs = make([][]byte, len(indices))
 	var start, i, n int = 0, 0, 0
 
 	// the bs maybe format below
@@ -78,17 +82,18 @@ func (c *MultiLineCodec) NextMessages(bs []byte) (msgs []*ari.Message) {
 		if i != 0 {
 			c.buf.Write(bs[start:i])
 		}
-		msgs[n] = MessageFrom(c.buf.Bytes())
+		logs[n] = copyFrom(c.buf.Bytes())
 		c.buf.Reset()
 		start = i
 	}
 	c.buf.Write(bs[start:])
 	// maybe the first msg is nil
-	if msgs[0] == nil {
-		msgs = msgs[1:]
+	if logs[0] == nil {
+		logs = logs[1:]
 	}
-	if len(msgs) == 0 {
-		msgs = nil
+	if len(logs) == 0 {
+		logs = nil
 	}
-	return msgs
+	return logs
 }
+

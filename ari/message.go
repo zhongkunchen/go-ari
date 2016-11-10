@@ -2,17 +2,17 @@ package ari
 
 type Message struct {
 	// doneChan is used to send SYN to message sender
-	DoneChan    chan <-int
+	DoneChan    chan int
 
 	serialNo    uint32
 
 	MessageType []byte
 	Body        []byte
 	tags        [][]byte
-	terms       map[[]byte][]byte
+	terms       map[string]string
 }
 
-func NewMessage(doneChan chan <-int, serialNo uint32,
+func NewMessage(doneChan chan int, serialNo uint32,
 		messageType []byte, body []byte, tags[][]byte) *Message {
 	m := &Message{
 		DoneChan:doneChan,
@@ -32,11 +32,11 @@ func (m *Message) AddTag(tag []byte) {
 	m.tags = append(m.tags, tag)
 }
 
-func (m *Message) SetTerm(key []byte, value []byte)  {
+func (m *Message) SetTerm(key string, value string)  {
 	m.terms[key] = value
 }
 
-func (m *Message) GetTerm(key []byte) (value []byte, ok bool)  {
+func (m *Message) GetTerm(key string) (value string, ok bool)  {
 	value, ok = m.terms[key]
 	return value, ok
 }

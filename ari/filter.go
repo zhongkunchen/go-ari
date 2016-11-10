@@ -73,7 +73,7 @@ func (f *filterWorker) loop(){
 		select {
 		case <- f.pAri.runningChan:
 			goto exit
-		case msg <- f.pAri.messageChan:
+		case msg = <- f.pAri.messageChan:
 			f.handle(msg)
 		}
 

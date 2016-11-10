@@ -31,7 +31,7 @@ func PutBuffer(bf *bytes.Buffer){
 
 func init()  {
 	// init the Buffer Pool
-	bp.New = func()(*bytes.Buffer) {
+	bp.New = func()(interface{}) {
 		return &bytes.Buffer{}
 	}
 }

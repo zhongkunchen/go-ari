@@ -22,7 +22,7 @@ type Ari struct {
 }
 
 // New creates instance of `*Ari`
-func New(opt *Option) *Ari {
+func New(opt *Options) *Ari {
 	p := &Ari{}
 	return p
 }
@@ -58,14 +58,14 @@ func (p *Ari) NotifyStop()  {
 
 // startProducers bootstraps all registered message producers
 func (p *Ari) startProducers() {
-	for name, conf := range p.conf.InputConf {
-
-	}
+	//for name, conf := range p.conf.InputConf {
+	//
+	//}
 }
 
 // startFilters starts some filter workers to process log messages
 func (p *Ari) startFilters()  {
-	for i:=0; i<p.Option().filterWorkerNum; i++ {
+	for i:=uint32(0); i<p.Option().filterWorkerNum; i++ {
 		worker := newFilterWorker(p)
 		p.waitGroup.Add(func(){
 			worker.loop()
@@ -76,11 +76,11 @@ func (p *Ari) startFilters()  {
 func (p *Ari) outputPump()  {
 }
 
-func (p *Ari) swapOption(opt *Option) {
+func (p *Ari) swapOption(opt *Options) {
 	p.option.Store(opt)
 }
 
 // Option return `*Option`
-func (p *Ari) Option() *Option {
-	return p.option.Load().(*Option)
+func (p *Ari) Option() *Options {
+	return p.option.Load().(*Options)
 }
