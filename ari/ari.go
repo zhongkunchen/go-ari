@@ -11,7 +11,6 @@ type Ari struct {
 	waitGroup   WaitWrapper
 
 	option      atomic.Value
-	conf        Config
 
 	runningChan chan int
 	isRunning   int32
@@ -65,12 +64,12 @@ func (p *Ari) startProducers() {
 
 // startFilters starts some filter workers to process log messages
 func (p *Ari) startFilters()  {
-	for i:=uint32(0); i<p.Option().filterWorkerNum; i++ {
-		worker := newFilterWorker(p)
-		p.waitGroup.Add(func(){
-			worker.loop()
-		})
-	}
+	//for i:=uint32(0); i<p.Option().filterWorkerNum; i++ {
+	//	worker := newFilterWorker(p)
+	//	p.waitGroup.Add(func(){
+	//		worker.loop()
+	//	})
+	//}
 }
 
 func (p *Ari) outputPump()  {

@@ -56,14 +56,14 @@ type filterWorker struct {
 func newFilterWorker(pAri *Ari) *filterWorker {
 	p := &filterWorker{pAri:pAri}
 	// config outer filters
-	for filterName, pluginConf := range pAri.conf.FilterConf {
-		if creator := GetCreator(filterName); creator != nil {
-			filter := creator.Create(pluginConf)
-			if filter != nil {
-				p.filters = append(p.filters, filter)
-			}
-		}
-	}
+	//for filterName, pluginConf := range pAri.conf.FilterConf {
+	//	if creator := GetCreator(filterName); creator != nil {
+	//		filter := creator.Create(pluginConf)
+	//		if filter != nil {
+	//			p.filters = append(p.filters, filter)
+	//		}
+	//	}
+	//}
 	return p
 }
 

@@ -1,95 +1,165 @@
 package ari
-/**
-{
-    "input": {
-        "gw": [
-            {
-                "plugin": "file",
-                "options": {
-                    "paths": ["/var/log/gateway/*.log"],
-                    "tags":["server#1"]
-                }
-            },
-            {
-                "plugin": "file",
-                "options": {
-                    "paths": ["/var/log/gateway2/*.log"],
-                    "tags":["server#2"]
-                }
-            },
-        ],
-        "test":[
-            {
-                "plugin": "generate",
-                "options": {
-                    "content": "[hello world]xxxxxxxx",
-                    "times": 1000
-                }
-            }
-        ]
-    },
-    "filter": {
-        "g*": {
-            "grok":{
-                "message":["pattern1", "pattern2"]
-            },
-            "date": {
-                "match": ["request_time", "yyMMdd HH:mm:ss"]
-            }
-        }
-    },
 
-    "output": {
-        "g*": [{"plugin":"elastisearch", "options": {}}],
-        "test": [
-            {
-                "plugin":"elastisearch",
-                "options": {
-                     "hosts":["localhost:9010"],
-                     "document_type": "test",
-                     "terms":{
-                         "source": "test-server"
-                     }
-                }
-            }
-        ]
-    }
+import (
+	"fmt"
+)
+
+// SysOpts is system options
+// example:
+// {"worker_num":30}
+type SysOpts struct {
+	FilterWorkerN int
 }
- */
 
-type FilterOptions struct {
-	SourcePat string
-	Conf map[string]interface{}
+func NewSysOpts(cf map[string]interface{}) (*SysOpts, error)  {
+	s := &SysOpts{
+		FilterWorkerN:10,
+	}
+	// cf is nil ,return default opts
+	if cf == nil {
+		return s, nil
+	}
+	if num, ok := cf["worker_num"]; ok {
+		s.FilterWorkerN = int(num)
+	}
+	return s, nil
 }
 
 type PluginOptions struct {
-	Plugin string
-	Conf   map[string]interface{}
+	// Plugin name
+	PluginName string
+	Conf       map[string]interface{}
 }
 
 type PluginGroup struct {
+	// Group name
 	Name string
+	// Plugins options in the group
+	Plugins []*PluginOptions
+}
+
+type InputGroup struct {
+	// Group name
+	Name string
+	// Plugins options in the group
 	Plugins []*PluginOptions
 }
 
 type Options struct {
 	cfg map[string]interface{}
-	filterWorkerNum int
+	SysOpts
 }
 
 func NewOptions(cfg map[string]interface{}) (*Options, error) {
-	opts := &Options{
-		filterWorkerNum:20,
-		cfg:cfg,
+	var sysCfg map[string]interface{}
+	if sys, ok := cfg["system"]; ok {
+		sysCfg = sys.(map[string]interface{})
 	}
-	return opts
+	sysOpts, err := NewSysOpts(sysCfg)
+	if err != nil {
+		return nil, err
+	}
+	opts := &Options{
+		cfg:cfg,
+		SysOpts:sysOpts,
+	}
+	return opts, nil
 }
 
-func (opts *Options) InputGroups()(map[string]*PluginGroup){
+func (opts *Options) InputGroups()(map[string]*InputGroup, error){
+	inputConf, ok := opts.cfg["input"]
+	if !ok {
+		return nil, nil
+	}
+	var inputGroups map[string]*InputGroup
+	for source, plugins := range inputConf.(map[string]interface{}) {
+		if inputGroups == nil {
+			inputGroups = make(map[string]*InputGroup)
+		}
+		// plugins is a slice of map like [{"options": {...}, "plugin": "file"},...]
+		pos := make([]*PluginOptions, len(plugins.([]interface{})))
+		for i, plu := range plugins.([]interface{}) {
+			plugin := plu.(map[string]interface{})
+			if pluginName, nameOk := plugin["plugin"]; nameOk {
+				pos[i] = &PluginOptions{
+					PluginName:pluginName.(string),
+					Conf:plugin["options"].(map[string]interface{}),
+				}
+			}else{
+				return nil, fmt.Errorf("invalid input plugin (%s) conf", pluginName)
+			}
+		}
+		inputGroups[source] = &InputGroup{
+			Name:source,
+			Plugins:pos,
+		}
+	}
+	return inputGroups, nil
 }
 
-func (opts *Options) FilterOptions()(map[string]*FilterOptions) {
+// FilterOptions
+// example:
+// {
+//   "gw": {
+//     "grok":{...},
+//     "plugin_b": {...},
+//     "date": {...},
+//   }
+// }
+func (opts *Options) FilterOptions()(map[string]map[string]*PluginOptions, error) {
+	var conf map[string]map[string]*PluginOptions
+	fiConf, ok := opts.cfg["filter"]
+	if !ok {
+		return nil, nil
+	}
+	for sourcePat, d:= range fiConf.(map[string]interface{}) {
+		var pluginsConf map[string]*PluginOptions
+		for name, c := range d.(map[string]interface{}) {
+			if pluginsConf == nil {
+				pluginsConf = make(map[string]*PluginOptions)
+			}
+			pluginsConf[name] = &PluginOptions{
+				PluginName:name,
+				Conf:c.(map[string]interface{}),
+			}
+		}
+		if pluginsConf != nil {
+			if conf == nil {
+				conf = make(map[string]map[string]*PluginOptions)
+			}
+			conf[sourcePat] = pluginsConf
+		}
+	}
+	return conf, nil
 }
 
-func (opts *Options) OutputGroups() (map[string] *PluginGroup)  {
+func (opts *Options) OutputGroups() (map[string] *PluginGroup, error)  {
+	inputConf, ok := opts.cfg["output"]
+	if !ok {
+		return nil, nil
+	}
+	var outputGroups map[string]*PluginGroup
+	for source, plugins := range inputConf.(map[string]interface{}) {
+		if outputGroups == nil {
+			outputGroups = make(map[string]*PluginGroup)
+		}
+		// plugins is a slice of map like [{"options": {...}, "plugin": "file"},...]
+		pos := make([]*PluginOptions, len(plugins.([]interface{})))
+		for i, plu := range plugins.([]interface{}) {
+			plugin := plu.(map[string]interface{})
+			if pluginName, nameOk := plugin["plugin"]; nameOk {
+				pos[i] = &PluginOptions{
+					PluginName:pluginName.(string),
+					Conf:plugin["options"].(map[string]interface{}),
+				}
+			}else{
+				return nil, fmt.Errorf("invalid output plugin (%s) conf", pluginName)
+			}
+		}
+		outputGroups[source] = &PluginGroup{
+			Name:source,
+			Plugins:pos,
+		}
+	}
+	return outputGroups, nil
 }
