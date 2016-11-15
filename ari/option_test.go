@@ -7,6 +7,10 @@ import (
 
 var demoJson = `
 {
+    "system": {
+        "worker_num":20
+    },
+
     "input": {
         "gw": [
             {

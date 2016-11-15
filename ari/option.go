@@ -12,6 +12,7 @@ type SysOpts struct {
 }
 
 func NewSysOpts(cf map[string]interface{}) (*SysOpts, error)  {
+	// defaults
 	s := &SysOpts{
 		FilterWorkerN:10,
 	}
@@ -19,8 +20,9 @@ func NewSysOpts(cf map[string]interface{}) (*SysOpts, error)  {
 	if cf == nil {
 		return s, nil
 	}
+	// worker_num
 	if num, ok := cf["worker_num"]; ok {
-		s.FilterWorkerN = int(num)
+		s.FilterWorkerN = int(num.(float64))
 	}
 	return s, nil
 }
@@ -38,16 +40,9 @@ type PluginGroup struct {
 	Plugins []*PluginOptions
 }
 
-type InputGroup struct {
-	// Group name
-	Name string
-	// Plugins options in the group
-	Plugins []*PluginOptions
-}
-
 type Options struct {
 	cfg map[string]interface{}
-	SysOpts
+	*SysOpts
 }
 
 func NewOptions(cfg map[string]interface{}) (*Options, error) {
@@ -66,15 +61,15 @@ func NewOptions(cfg map[string]interface{}) (*Options, error) {
 	return opts, nil
 }
 
-func (opts *Options) InputGroups()(map[string]*InputGroup, error){
+func (opts *Options) InputGroups()(map[string]*PluginGroup, error){
 	inputConf, ok := opts.cfg["input"]
 	if !ok {
 		return nil, nil
 	}
-	var inputGroups map[string]*InputGroup
+	var inputGroups map[string]*PluginGroup
 	for source, plugins := range inputConf.(map[string]interface{}) {
 		if inputGroups == nil {
-			inputGroups = make(map[string]*InputGroup)
+			inputGroups = make(map[string]*PluginGroup)
 		}
 		// plugins is a slice of map like [{"options": {...}, "plugin": "file"},...]
 		pos := make([]*PluginOptions, len(plugins.([]interface{})))
@@ -89,7 +84,7 @@ func (opts *Options) InputGroups()(map[string]*InputGroup, error){
 				return nil, fmt.Errorf("invalid input plugin (%s) conf", pluginName)
 			}
 		}
-		inputGroups[source] = &InputGroup{
+		inputGroups[source] = &PluginGroup{
 			Name:source,
 			Plugins:pos,
 		}

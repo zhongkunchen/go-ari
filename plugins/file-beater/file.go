@@ -179,7 +179,9 @@ func (f *FileBeater) WaitOneMSG() (msg *ari.Message, err error) {
 		if err != nil {
 			return msg, err
 		}
-		for _, msg f.Codec.NextLogs(block)
+		for _, msgBody := range f.Codec.NextLogs(block) {
+			// wrap messages
+		}
 	}
 }
 
@@ -225,12 +227,13 @@ func (f *FileBeater) Beating()  {
 	f.exit()
 }
 
-var _ ari.Beater = &BeaterRunner{}
+var _ ari.Beater = &ari.Runner{}
 
 // BeaterRunner organize `FileBeater` to produce log messages
 type BeaterRunner struct {
 	sync.RWMutex
 	Logger    *log.Logger
+	context *ari.Context
 
 	beaters   []*FileBeater
 	options   *Options
@@ -241,8 +244,7 @@ type BeaterRunner struct {
 }
 
 // NewBeaterRunner creates a new BeaterRunner instance
-func NewBeaterRunner(conf ari.Configuration,
-	sendChan chan <- *ari.Message, logger *log.Logger) (*BeaterRunner, error) {
+func NewBeaterRunner(conf map[string]interface{}, ctx *ari.Context) (*BeaterRunner, error) {
 	var opts *Options
 	var err error
 	opts, err= NewOptions(conf)
@@ -250,8 +252,8 @@ func NewBeaterRunner(conf ari.Configuration,
 		return nil, err
 	}
 	fb := &BeaterRunner{
-		sendChan:sendChan,
-		Logger:logger,
+		sendChan:ctx.Ari.MessageChan,
+		Logger:ctx.Logger,
 		closeChan:make(chan int, 1),
 		options:opts,
 	}
@@ -260,7 +262,6 @@ func NewBeaterRunner(conf ari.Configuration,
 
 func (r *BeaterRunner) EncodeMSG(body []byte) *ari.Message {
 	m := &ari.Message{
-		r.options
 	}
 	return m
 }
@@ -270,8 +271,8 @@ func (r *BeaterRunner) Fatal(err error)  {
 	runtime.Goexit()
 }
 
-// Beating method bootstraps all beaters
-func (r *BeaterRunner) Beating()  {
+// Run method bootstraps all beaters
+func (r *BeaterRunner) Run() error  {
 	var err error
 	// paths set
 	paths := map[string]interface{}{}
@@ -318,6 +319,7 @@ func (r *BeaterRunner) Beating()  {
 			beater.Beating()
 		})
 	}
+	return nil
 }
 
 func resolveCodec(name string, codecOpts map[string]interface{}) (Codec, error) {
@@ -339,15 +341,15 @@ func (r *BeaterRunner) Stop()  {
 	r.group.Wait()
 }
 
-type runnerCreator struct {}
+type inputRunnerBuilder struct {}
 
-func (c *runnerCreator) Create(conf ari.Configuration,
-	messageChan chan <- *ari.Message) (beater ari.Beater, err error)  {
-	beater, err = NewBeaterRunner(conf, messageChan, log.GetLogger())
-	return beater, err
+func (b *inputRunnerBuilder) Build(ctx *ari.Context,
+	cfg map[string]interface{}) ari.Runner {
+	br, _ := NewBeaterRunner(cfg, ctx)
+	return br
 }
 
 func init()  {
 	// register the plugin
-	ari.RegisterBeaterCreator("file", &runnerCreator{})
+	ari.InputPlugins.Register("file", &inputRunnerBuilder{})
 }
