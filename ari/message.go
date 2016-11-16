@@ -20,6 +20,7 @@ func NewMessage(doneChan chan int, serialNo uint32,
 		MessageType:messageType,
 		Body:body,
 		tags:tags,
+		terms:map[string]string{},
 	}
 	return m
 }
