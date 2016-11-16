@@ -51,7 +51,7 @@ func NewOptions(conf ari.Configuration) (opts *Options, err error) {
 		StartPos:-1,
 	}
 	var ok bool
-	if opts.CodecOption, ok = conf["codec"]; !ok {
+	if opts.CodecOption, ok = conf["codec"].(map[string]interface{}); !ok {
 		return nil, errors.New("expect `codec` conf")
 	}
 	// resolve start position
@@ -89,37 +89,45 @@ func NewOptions(conf ari.Configuration) (opts *Options, err error) {
 // a `FileBeater` only watches one log file.
 type FileBeater struct {
 	runner       *BeaterRunner
+	context      *ari.Context
 
+	// SendChan is the channel to send messages
 	SendChan     chan <- *ari.Message
 	Logger       *log.Logger
 	Codec        Codec
-
-	readFile     *os.File
-	reader       *bufio.Reader
-	readFileName string
-	readPos      uint64
 	sentCnt      uint64
 	closeChan    chan int
+
+	// buf for reader of the log file
 	blockBuf     []byte
 	// StartPos is the file offset to start
 	// -1 means start at the end
 	// now it only can be set as 0 or -1
 	StartPos     int
 	MaxBlockSize uint
+	// the log file path
 	FilePath     string
-	undelivered  []*ari.Message
+	readFile     *os.File
+	reader       *bufio.Reader
+	readPos      uint64
+
+	// pending messages
+	pending      []*ari.Message
+	pendingCur   int
 }
 
 func NewFileBeater(runner *BeaterRunner, path string, startPos int, maxBlockSize uint,
-	sendChan chan <- *ari.Message, logger *log.Logger, codec Codec) *FileBeater {
+	sendChan chan <- *ari.Message, codec Codec) *FileBeater {
 	f := &FileBeater{
+		context:runner.context,
 		runner:runner,
 		Codec:codec,
 		StartPos:startPos,
 		MaxBlockSize:maxBlockSize,
 		FilePath:path,
 		SendChan:sendChan,
-		Logger:logger,
+		Logger:runner.Logger,
+		closeChan:make(chan int, 1),
 	}
 	f.blockBuf = make([]byte, f.MaxBlockSize)
 	return f
@@ -145,7 +153,7 @@ func (f *FileBeater) readOne() ([]byte, error) {
 	var data []byte
 	// open file if necessary
 	if f.readFile == nil {
-		f.readFile, err = os.OpenFile(f.readFileName, os.O_RDONLY, 0666)
+		f.readFile, err = os.OpenFile(f.FilePath, os.O_RDONLY, 0666)
 		if err != nil {
 			return data, err
 		}
@@ -171,16 +179,32 @@ func (f *FileBeater) readOne() ([]byte, error) {
 	return data, nil
 }
 
-// WaitOneMSG todo: WaitOneMessage reads one log message
+// WaitOneMSG pick up one message from pending messages or the log file
 func (f *FileBeater) WaitOneMSG() (msg *ari.Message, err error) {
 	var block []byte
 	for {
-		block, err = f.readOne()
-		if err != nil {
-			return msg, err
-		}
-		for _, msgBody := range f.Codec.NextLogs(block) {
-			// wrap messages
+		// no pending msg, try to read from the log file
+		if len(f.pending) <= f.pendingCur {
+			block, err = f.readOne()
+			if err != nil {
+				return nil, err
+			}
+			msgs := f.Codec.NextLogs(block)
+			if len(msgs) == 0 {
+				continue
+			}
+			f.pending = make([]*ari.Message, len(msgs))
+			for i, msgBody := range msgs {
+				// wrap messages
+				m := f.context.Ari.WrapMessage(msgBody)
+				f.pending[i] = m
+			}
+		}else{
+			// pending messages exist, pick up one to return
+			// increment the pending cursor
+			msg = f.pending[f.pendingCur]
+			f.pendingCur++
+			return msg, nil
 		}
 	}
 }
@@ -219,15 +243,11 @@ func (f *FileBeater) Beating()  {
 			message = nil
 		case <- f.closeChan:
 			goto exit
-		default:
-			runtime.Gosched()
 		}
 	}
-	exit:
+    exit:
 	f.exit()
 }
-
-var _ ari.Beater = &ari.Runner{}
 
 // BeaterRunner organize `FileBeater` to produce log messages
 type BeaterRunner struct {
@@ -244,10 +264,11 @@ type BeaterRunner struct {
 }
 
 // NewBeaterRunner creates a new BeaterRunner instance
-func NewBeaterRunner(conf map[string]interface{}, ctx *ari.Context) (*BeaterRunner, error) {
-	var opts *Options
+func NewBeaterRunner(conf map[string]interface{},
+	ctx *ari.Context) (*BeaterRunner, error) {
+	var runnerOpts *Options
 	var err error
-	opts, err= NewOptions(conf)
+	runnerOpts, err= NewOptions(ari.Configuration(conf))
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +276,8 @@ func NewBeaterRunner(conf map[string]interface{}, ctx *ari.Context) (*BeaterRunn
 		sendChan:ctx.Ari.MessageChan,
 		Logger:ctx.Logger,
 		closeChan:make(chan int, 1),
-		options:opts,
+		options:runnerOpts,
+		context:ctx,
 	}
 	return fb, nil
 }
@@ -279,25 +301,25 @@ func (r *BeaterRunner) Run() error  {
 	// resolve paths with glob patterns
 	for _, pathPattern := range r.options.Paths {
 		matches, err := filepath.Glob(pathPattern)
-		if err != nil {
+		if err == nil {
 			for _, p:=range matches {
 				paths[p] = nil
 			}
 		}
 		// invalid path patterns will be ignored
 	}
-	// start FileBeater on every file path; add all to group
-	if r.beaters == nil {
-		r.beaters = make([]*FileBeater, len(paths))
-	}
-	r.Logger.Debugf("[FBR]is to start %d beaters", len(paths))
+	r.Logger.Debugf("[FBR] is startting %d beaters", len(paths))
 	// pickup one codec config
 	var codecName string
 	var codecOpts map[string]interface{}
-	for name, codecOpts := range r.options.CodecOption {
-		codecName, codecOpts = name, codecOpts
+	for name, _ := range r.options.CodecOption {
+		codecName = name
 		break
 	}
+	if codecName == "" {
+		r.Fatal(errors.New("expect codec"))
+	}
+	codecOpts = r.options.CodecOption[codecName].(map[string]interface{})
 	// create beaters
 	for path, _ := range paths {
 		// every beater has its own codec
@@ -305,13 +327,12 @@ func (r *BeaterRunner) Run() error  {
 		codec, err = resolveCodec(codecName, codecOpts)
 		if err != nil {
 			r.Fatal(err)
+			break
 		}
-		break
 		beater := NewFileBeater(r, path, r.options.StartPos,
-			r.options.MaxBlockSize, r.sendChan, r.Logger, codec)
+			r.options.MaxBlockSize, r.sendChan, codec)
 		r.beaters = append(r.beaters, beater)
 	}
-
 	// bootstrap all beaters
 	for _, beater := range r.beaters {
 		r.group.Add(func(){
@@ -324,11 +345,11 @@ func (r *BeaterRunner) Run() error  {
 
 func resolveCodec(name string, codecOpts map[string]interface{}) (Codec, error) {
 	if name == "multiline" {
-		pattern, ok := codecOpts["token"];
+		pattern, ok := codecOpts["token"].(string);
 		if !ok {
 			return nil, errors.New("multiline codec expects `token` conf")
 		}
-		return NewMultiLineCodec(pattern), nil
+		return NewMultiLineCodec(pattern)
 	}
 	return nil, fmt.Errorf("unsupportted codec %s", name)
 }
@@ -345,7 +366,10 @@ type inputRunnerBuilder struct {}
 
 func (b *inputRunnerBuilder) Build(ctx *ari.Context,
 	cfg map[string]interface{}) ari.Runner {
-	br, _ := NewBeaterRunner(cfg, ctx)
+	br, e := NewBeaterRunner(cfg, ctx)
+	if e != nil {
+		panic(e)
+	}
 	return br
 }
 

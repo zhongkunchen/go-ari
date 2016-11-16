@@ -11,7 +11,7 @@ import (
 type Context struct {
 	Ari *Ari
 	Opts *Options
-	Logger log.Logger
+	Logger *log.Logger
 }
 
 var STATUS = struct{
@@ -29,7 +29,7 @@ type Ari struct {
 	waitGroup   WaitWrapper
 	context     *Context
 
-	option      atomic.Value
+	opts        atomic.Value
 
 	runningChan chan int
 	status      int32
@@ -41,8 +41,12 @@ type Ari struct {
 
 // New creates instance of `*Ari`
 func New(opts *Options) *Ari {
-	p := &Ari{}
+	p := &Ari{
+		runningChan:make(chan int, 1),
+		MessageChan:make(chan *Message, 1),
+	}
 	p.context = &Context{Ari:p,Opts:opts, Logger:log.GetLogger()}
+	p.opts.Store(opts)
 	atomic.StoreInt32(&p.status, STATUS.UNKNOWN)
 	return p
 }
@@ -56,17 +60,17 @@ func (p *Ari) Main() {
 	// start the input endpoint
 	err := p.startInputGroups()
 	if err != nil {
-		p.NotifyStop()
+		p.Fatalf("%v", err)
 	}
-	// start the filter endpoint
-	err = p.startFilters()
+	// start workers
+	err = p.startWorkers()
 	if err != nil {
-		p.NotifyStop()
+		p.Fatalf("%v", err)
 	}
 	// start the output endpoint
 	err = p.startOutputGroups()
 	if err != nil {
-		p.NotifyStop()
+		p.Fatalf("%v", err)
 	}
 	// now i'm running
 	atomic.StoreInt32(&p.status, STATUS.RUNNING)
@@ -79,9 +83,17 @@ func (p *Ari) NotifyStop()  {
 	p.waitGroup.Wait()
 }
 
+func (p *Ari) WrapMessage(body []byte) *Message {
+	msg := &Message{
+		DoneChan:make(chan int, 1),
+		Body:body,
+	}
+	return msg
+}
+
 func (p *Ari) Fatalf(errMsg string, args ...interface{})  {
 	p.context.Logger.Errorf(errMsg, args...)
-	runtime.Goexit()
+	p.NotifyStop()
 }
 
 // startInputGroups bootstraps all registered message producers
@@ -113,8 +125,8 @@ func (p *Ari) startInputGroups() error {
 	return nil
 }
 
-// startFilters starts some filter workers to process log messages
-func (p *Ari) startFilters() error  {
+// startWorkers starts workers to process log messages
+func (p *Ari) startWorkers() error  {
 	//for i:=uint32(0); i<p.Option().filterWorkerNum; i++ {
 	//	worker := newFilterWorker(p)
 	//	p.waitGroup.Add(func(){
@@ -129,10 +141,10 @@ func (p *Ari) startOutputGroups() error  {
 }
 
 func (p *Ari) swapOption(opt *Options) {
-	p.option.Store(opt)
+	p.opts.Store(opt)
 }
 
 // Options return `*Option`
 func (p *Ari) Options() *Options {
-	return p.option.Load().(*Options)
+	return p.opts.Load().(*Options)
 }

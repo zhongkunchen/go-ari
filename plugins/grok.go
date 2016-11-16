@@ -1,6 +1,6 @@
 package plugins
 
-import "github.com/argpass/ari/ari"
+import "github.com/argpass/go-ari/ari"
 
 type grok struct {}
 
@@ -18,10 +18,10 @@ func (g *grok) Create(conf map[string]interface{}) ari.Filter {
 }
 
 func (g *grok) Handle(msg *ari.Message) bool {
-	msg.SetTerm([]byte("attach"), []byte("grok"))
+	msg.SetTerm("attach", "grok")
 	return true
 }
 
 func init()  {
-	ari.RegisterCreator("grok", new())
+	//ari.RegisterCreator("grok", new())
 }
