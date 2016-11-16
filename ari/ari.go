@@ -6,6 +6,7 @@ import (
 	"github.com/argpass/go-ari/ari/log"
 	"fmt"
 	"runtime"
+	"os"
 )
 
 type Context struct {
@@ -31,7 +32,7 @@ type Ari struct {
 
 	opts        atomic.Value
 
-	runningChan chan int
+	closeChan   chan int
 	status      int32
 
 	// messageChan receives log messages from log producer
@@ -42,7 +43,7 @@ type Ari struct {
 // New creates instance of `*Ari`
 func New(opts *Options) *Ari {
 	p := &Ari{
-		runningChan:make(chan int, 1),
+		closeChan:make(chan int, 1),
 		MessageChan:make(chan *Message, 1),
 	}
 	p.context = &Context{Ari:p,Opts:opts, Logger:log.GetLogger()}
@@ -76,11 +77,17 @@ func (p *Ari) Main() {
 	atomic.StoreInt32(&p.status, STATUS.RUNNING)
 }
 
+// Dispatch a msg to all senders
+func (p *Ari) Dispatch(msg *Message){
+	// todo: dispatch the msg to all senders
+}
+
 // NotifyStop stop all tasks
 func (p *Ari) NotifyStop()  {
-	close(p.runningChan)
+	close(p.closeChan)
 	// wait all tasks finished
 	p.waitGroup.Wait()
+	os.Exit(0)
 }
 
 func (p *Ari) WrapMessage(body []byte) *Message {
@@ -93,7 +100,7 @@ func (p *Ari) WrapMessage(body []byte) *Message {
 
 func (p *Ari) Fatalf(errMsg string, args ...interface{})  {
 	p.context.Logger.Errorf(errMsg, args...)
-	p.NotifyStop()
+	os.Exit(-1)
 }
 
 // startInputGroups bootstraps all registered message producers
