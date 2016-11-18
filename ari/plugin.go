@@ -10,17 +10,17 @@ type Runner interface {
 }
 
 type RunnerBuilder interface {
-	Build(ctx *Context, cfg map[string]interface{}) Runner
+	Build(ctx *Context, cfg map[string]interface{}, group string) Runner
 }
 
-type PluginRegistry struct {
+type RunnerRegistry struct {
 	lock sync.RWMutex
 	registry map[string]RunnerBuilder
 	group string
 }
 
-func newPluginRegistry(group string) *PluginRegistry {
-	p := &PluginRegistry{
+func newRunnerRegistry(group string) *RunnerRegistry {
+	p := &RunnerRegistry{
 		registry:map[string]RunnerBuilder{},
 		group:group,
 	}
@@ -28,7 +28,7 @@ func newPluginRegistry(group string) *PluginRegistry {
 }
 
 // Register a plugin runner with name
-func (r *PluginRegistry) Register(name string, runner RunnerBuilder) error {
+func (r *RunnerRegistry) Register(name string, runner RunnerBuilder) error {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 	if _, exists := r.registry[name]; exists {
@@ -38,7 +38,7 @@ func (r *PluginRegistry) Register(name string, runner RunnerBuilder) error {
 	return nil
 }
 
-func (r *PluginRegistry) get(name string) (builder RunnerBuilder)  {
+func (r *RunnerRegistry) get(name string) (builder RunnerBuilder)  {
 	r.lock.RLock()
 	defer r.lock.RUnlock()
 	builder, ok := r.registry[name]
@@ -49,7 +49,7 @@ func (r *PluginRegistry) get(name string) (builder RunnerBuilder)  {
 }
 
 var (
-	InputPlugins = newPluginRegistry("input")
-	OutputPlugins = newPluginRegistry("output")
-	FilterPlugins = newPluginRegistry("filter")
+	InputRunnerBuilders = newRunnerRegistry("input")
+	OutputPlugins = newRunnerRegistry("output")
+	FilterPlugins = newRunnerRegistry("filter")
 )

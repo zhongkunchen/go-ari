@@ -39,14 +39,21 @@ var demoJson = `
         ]
     },
     "filter": {
-        "g*": {
-            "grok":{
-                "message":["pattern1", "pattern2"]
+        "g*": [
+            {
+                "plugin": "grok",
+                "options": {
+                    "message": ["pattern1"],
+                    "a":99
+                }
             },
-            "date": {
-                "match": ["request_time", "yyMMdd HH:mm:ss"]
+            {
+                "plugin": "date",
+                "options": {
+                    "pick": "request_time"
+                }
             }
-        }
+       ]
     },
 
     "output": {
@@ -94,12 +101,16 @@ func TestOptions_FilterOptions(t *testing.T) {
 		t.Fatalf("err:%v", err)
 	}
 	opts, _:= NewOptions(conf)
-	filters, err := opts.FilterOptions()
+	filters, err := opts.FilterGroups()
 	if err != nil {
-		t.Fatalf("input groups err:%v", err)
+		t.Fatalf("filter groups err:%v", err)
 	}
-	if filters["g*"]["grok"].PluginName != "grok" {
-		t.Fatal("fail to parse filter config")
+	p1 := filters["g*"].Plugins[0]
+	if p1.PluginName != "grok" {
+		t.Fatal("fail to parse filter plugin name")
+	}
+	if p1.Conf["a"].(float64) != 99{
+		t.Fatal("fail to parse filter conf")
 	}
 }
 

@@ -196,7 +196,7 @@ func (f *FileBeater) WaitOneMSG() (msg *ari.Message, err error) {
 			f.pending = make([]*ari.Message, len(msgs))
 			for i, msgBody := range msgs {
 				// wrap messages
-				m := f.context.Ari.WrapMessage(msgBody)
+				m := f.context.Ari.WrapMessage(msgBody, f.runner.groupName)
 				f.pending[i] = m
 			}
 		}else{
@@ -261,11 +261,12 @@ type BeaterRunner struct {
 	closeChan chan int
 
 	group     ari.WaitWrapper
+	groupName string
 }
 
 // NewBeaterRunner creates a new BeaterRunner instance
 func NewBeaterRunner(conf map[string]interface{},
-	ctx *ari.Context) (*BeaterRunner, error) {
+	ctx *ari.Context, group string) (*BeaterRunner, error) {
 	var runnerOpts *Options
 	var err error
 	runnerOpts, err= NewOptions(ari.Configuration(conf))
@@ -278,6 +279,7 @@ func NewBeaterRunner(conf map[string]interface{},
 		closeChan:make(chan int, 1),
 		options:runnerOpts,
 		context:ctx,
+		groupName:group,
 	}
 	return fb, nil
 }
@@ -365,8 +367,8 @@ func (r *BeaterRunner) Stop()  {
 type inputRunnerBuilder struct {}
 
 func (b *inputRunnerBuilder) Build(ctx *ari.Context,
-	cfg map[string]interface{}) ari.Runner {
-	br, e := NewBeaterRunner(cfg, ctx)
+	cfg map[string]interface{}, group string) ari.Runner {
+	br, e := NewBeaterRunner(cfg, ctx, group)
 	if e != nil {
 		panic(e)
 	}
@@ -375,5 +377,5 @@ func (b *inputRunnerBuilder) Build(ctx *ari.Context,
 
 func init()  {
 	// register the plugin
-	ari.InputPlugins.Register("file", &inputRunnerBuilder{})
+	ari.InputRunnerBuilders.Register("file", &inputRunnerBuilder{})
 }

@@ -10,10 +10,12 @@ type Message struct {
 	Body        []byte
 	tags        [][]byte
 	terms       map[string]string
+	GroupName   string
 }
 
 func NewMessage(doneChan chan int, serialNo uint32,
-		messageType []byte, body []byte, tags[][]byte) *Message {
+		messageType []byte, body []byte,
+		tags[][]byte, groupName string) *Message {
 	m := &Message{
 		DoneChan:doneChan,
 		serialNo:serialNo,
@@ -21,6 +23,7 @@ func NewMessage(doneChan chan int, serialNo uint32,
 		Body:body,
 		tags:tags,
 		terms:map[string]string{},
+		GroupName:groupName,
 	}
 	return m
 }

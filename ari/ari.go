@@ -91,8 +91,8 @@ func (p *Ari) NotifyStop()  {
 	os.Exit(0)
 }
 
-func (p *Ari) WrapMessage(body []byte) *Message {
-	msg := NewMessage(make(chan int, 1), 0, nil, body, nil)
+func (p *Ari) WrapMessage(body []byte, groupName string) *Message {
+	msg := NewMessage(make(chan int, 1), 0, nil, body, nil, groupName)
 	return msg
 }
 
@@ -112,12 +112,12 @@ func (p *Ari) startInputGroups() error {
 		p.context.Logger.Debugf("start input group %s", group.Name)
 		for _, pluginOpts := range group.Plugins {
 			// get runner builder with plugin name
-			rb := InputPlugins.get(pluginOpts.PluginName)
+			rb := InputRunnerBuilders.get(pluginOpts.PluginName)
 			if rb == nil {
 				return fmt.Errorf("no such input plugin %s registered",
 					pluginOpts.PluginName)
 			}
-			runner := rb.Build(p.context, pluginOpts.Conf)
+			runner := rb.Build(p.context, pluginOpts.Conf, group.Name)
 			// start plugin in a goroutine
 			p.waitGroup.Add(func(){
 				err := runner.Run()

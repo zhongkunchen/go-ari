@@ -1,6 +1,9 @@
 package ari
 
-import "github.com/argpass/go-ari/ari/log"
+import (
+	"github.com/argpass/go-ari/ari/log"
+	"regexp"
+)
 
 type Worker struct {
 	ari *Ari
@@ -26,6 +29,13 @@ func (w *Worker) exit()  {
 // Handle method filters the msg
 func (w *Worker) Handle(msg *Message) (*Message, error) {
 	// todo: filter the msg
+	groups, err := w.ari.Options().FilterGroups()
+	if err != nil {
+		return nil, err
+	}
+	for _, group := range groups {}
+	msg.GroupName
+	//source := msg.GroupName
 	msg.SetTerm("processed", "worker")
 	return msg, nil
 }

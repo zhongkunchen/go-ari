@@ -2,6 +2,7 @@ package ari
 
 import (
 	"fmt"
+	"sync"
 )
 
 // SysOpts is system options
@@ -41,8 +42,13 @@ type PluginGroup struct {
 }
 
 type Options struct {
+	lock sync.RWMutex
 	cfg map[string]interface{}
 	*SysOpts
+
+	inputGroups map[string]*PluginGroup
+	filterGroups map[string]*PluginGroup
+	outputGroups map[string]*PluginGroup
 }
 
 func NewOptions(cfg map[string]interface{}) (*Options, error) {
@@ -58,10 +64,27 @@ func NewOptions(cfg map[string]interface{}) (*Options, error) {
 		cfg:cfg,
 		SysOpts:sysOpts,
 	}
+	_, err = opts.InputGroups()
+	if err != nil {
+		return nil, err
+	}
+	_, err = opts.FilterGroups()
+	if err != nil {
+		return nil, err
+	}
+	_, err = opts.outputGroups()
+	if err != nil {
+		return nil, err
+	}
 	return opts, nil
 }
 
 func (opts *Options) InputGroups()(map[string]*PluginGroup, error){
+	if opts.inputGroups != nil {
+		return opts.inputGroups, nil
+	}
+	opts.lock.Lock()
+	defer opts.lock.Unlock()
 	inputConf, ok := opts.cfg["input"]
 	if !ok {
 		return nil, nil
@@ -89,46 +112,53 @@ func (opts *Options) InputGroups()(map[string]*PluginGroup, error){
 			Plugins:pos,
 		}
 	}
+	opts.inputGroups = inputGroups
 	return inputGroups, nil
 }
 
-// FilterOptions
-// example:
-// {
-//   "gw": {
-//     "grok":{...},
-//     "plugin_b": {...},
-//     "date": {...},
-//   }
-// }
-func (opts *Options) FilterOptions()(map[string]map[string]*PluginOptions, error) {
-	var conf map[string]map[string]*PluginOptions
-	fiConf, ok := opts.cfg["filter"]
+func (opts *Options) FilterGroups() (map[string] *PluginGroup, error) {
+	if opts.filterGroups != nil {
+		return opts.filterGroups, nil
+	}
+	opts.lock.Lock()
+	defer opts.lock.Unlock()
+	inputConf, ok := opts.cfg["filter"]
 	if !ok {
 		return nil, nil
 	}
-	for sourcePat, d:= range fiConf.(map[string]interface{}) {
-		var pluginsConf map[string]*PluginOptions
-		for name, c := range d.(map[string]interface{}) {
-			if pluginsConf == nil {
-				pluginsConf = make(map[string]*PluginOptions)
-			}
-			pluginsConf[name] = &PluginOptions{
-				PluginName:name,
-				Conf:c.(map[string]interface{}),
+	var filterGroups map[string]*PluginGroup
+	for source, plugins := range inputConf.(map[string]interface{}) {
+		if filterGroups == nil {
+			filterGroups = make(map[string]*PluginGroup)
+		}
+		// plugins is a slice of map like [{"options": {...}, "plugin": "file"},...]
+		pos := make([]*PluginOptions, len(plugins.([]interface{})))
+		for i, plu := range plugins.([]interface{}) {
+			plugin := plu.(map[string]interface{})
+			if pluginName, nameOk := plugin["plugin"]; nameOk {
+				pos[i] = &PluginOptions{
+					PluginName:pluginName.(string),
+					Conf:plugin["options"].(map[string]interface{}),
+				}
+			}else{
+				return nil, fmt.Errorf("invalid filter plugin (%s) conf", pluginName)
 			}
 		}
-		if pluginsConf != nil {
-			if conf == nil {
-				conf = make(map[string]map[string]*PluginOptions)
-			}
-			conf[sourcePat] = pluginsConf
+		filterGroups[source] = &PluginGroup{
+			Name:source,
+			Plugins:pos,
 		}
 	}
-	return conf, nil
+	opts.filterGroups = filterGroups
+	return filterGroups, nil
 }
 
 func (opts *Options) OutputGroups() (map[string] *PluginGroup, error)  {
+	if opts.outputGroups != nil {
+		return opts.outputGroups, nil
+	}
+	opts.lock.Lock()
+	defer opts.lock.Unlock()
 	inputConf, ok := opts.cfg["output"]
 	if !ok {
 		return nil, nil
@@ -156,5 +186,6 @@ func (opts *Options) OutputGroups() (map[string] *PluginGroup, error)  {
 			Plugins:pos,
 		}
 	}
+	opts.outputGroups = outputGroups
 	return outputGroups, nil
 }
