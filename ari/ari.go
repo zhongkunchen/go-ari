@@ -80,7 +80,7 @@ func (p *Ari) Main() {
 func (p *Ari) Dispatch(msg *Message){
 	// todo: dispatch the msg to all senders
 	close(msg.DoneChan)
-	p.context.Logger.Debugf("msg:%v", msg)
+	p.context.Logger.Debugf("msg<<<%v", msg)
 }
 
 // NotifyStop stop all tasks

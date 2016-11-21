@@ -42,6 +42,12 @@ var demoJson = `
         ]
     },
     "filter": {
+        "gw": [
+            {
+		"plugin": "grok",
+	        "options": {}
+	    }
+        ]
     },
 
     "output": {

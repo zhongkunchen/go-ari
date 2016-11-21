@@ -10,16 +10,24 @@ type GroupFilter struct {
 	filters []Filter
 }
 
-func newGroupFilter(optsList []*PluginOptions) *GroupFilter {
+func newGroupFilter(ctx *Context, optsList []*PluginOptions) (*GroupFilter,error) {
 	filters := make([]Filter, len(optsList))
 	for i, opts := range optsList {
-		fi := Filters.get(opts.PluginName)
-		filters[i] = fi
+		fb := FilterBuilders.get(opts.PluginName)
+		if fb != nil {
+			fi, err := fb.Build(ctx, opts.Conf)
+			if err != nil {
+				return nil, err
+			}
+			filters[i] = fi
+		}else{
+			filters[i] = nil
+		}
 	}
 	g := &GroupFilter{
 		filters:filters,
 	}
-	return g
+	return g, nil
 }
 
 func (g *GroupFilter) DoFilter(msg *Message) bool {
@@ -74,10 +82,16 @@ func (w *Worker) GetGroupFilter(groupName string) (Filter, error) {
 			return nil, err
 		}
 		if reg.Match([]byte(groupName)) {
-			w.groupFilters[groupName] = Filter(newGroupFilter(group.Plugins))
+			fi, err := newGroupFilter(w.context, group.Plugins)
+			if err != nil {
+				return nil, err
+			}
+			w.groupFilters[groupName] = Filter(fi)
 		}
 	}
-	w.groupFilters[groupName] = nil
+	if _, exists = w.groupFilters[groupName]; !exists {
+		w.groupFilters[groupName] = nil
+	}
 	return w.GetGroupFilter(groupName)
 }
 

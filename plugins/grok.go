@@ -2,29 +2,26 @@ package plugins
 
 import "github.com/argpass/go-ari/ari"
 
-type grok struct {}
+var _ ari.Filter = &grokFilter{}
 
-func (g *grok) config(conf map[string]interface{})  {
-}
+type grokFilter struct {}
 
-func new() *grok {
-	return &grok{}
-}
-
-func (g *grok) DoFilter(msg *ari.Message)bool {
-	return true
-}
-
-func (g *grok) Create(conf map[string]interface{}) ari.Filter {
-	g.config(conf)
-	return g
-}
-
-func (g *grok) Handle(msg *ari.Message) bool {
+func (g *grokFilter) DoFilter(msg *ari.Message)bool {
 	msg.SetTerm("attach", "grok")
+	msg.SetTerm("name", "fromg")
 	return true
+}
+
+var _ ari.FilterBuilder = &grokBuilder{}
+
+type grokBuilder struct {
+}
+
+func(gb *grokBuilder) Build(ctx *ari.Context,
+	cfg map[string]interface{}) (ari.Filter, error){
+	return &grokFilter{}, nil
 }
 
 func init()  {
-	//ari.RegisterCreator("grok", new())
+	ari.FilterBuilders.Register("grok", &grokBuilder{})
 }
