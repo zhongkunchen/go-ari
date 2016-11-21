@@ -12,7 +12,10 @@ import (
 	"strings"
 	"github.com/argpass/go-ari/ari/log"
 	"fmt"
+	"time"
 )
+
+var E_EOF = errors.New("E_EOF")
 
 // Options
 // Example:
@@ -110,10 +113,12 @@ type FileBeater struct {
 	readFile     *os.File
 	reader       *bufio.Reader
 	readPos      uint64
+	undeliveredC chan *ari.Message
 
 	// pending messages
 	pending      []*ari.Message
 	pendingCur   int
+	waitSecond   time.Duration
 }
 
 func NewFileBeater(runner *BeaterRunner, path string, startPos int, maxBlockSize uint,
@@ -128,9 +133,44 @@ func NewFileBeater(runner *BeaterRunner, path string, startPos int, maxBlockSize
 		SendChan:sendChan,
 		Logger:runner.Logger,
 		closeChan:make(chan int, 1),
+		undeliveredC:make(chan *ari.Message, 1),
+		waitSecond:2,
 	}
 	f.blockBuf = make([]byte, f.MaxBlockSize)
+	go f.pump()
 	return f
+}
+
+func (f *FileBeater) pump()  {
+	var message *ari.Message
+	var err error
+	var sendChan chan *ari.Message
+	for {
+		if message == nil {
+			message, err = f.readOneMSG()
+			if err != nil {
+				message = nil
+				// todo: handle E_EOF
+				if err == E_EOF {
+					f.Logger.Debugf("[FB(%s)]E_EOF, wait %d s",
+						f.FilePath, f.waitSecond)
+				}else {
+					f.Logger.Errorf("Fail to read one msg, err:%v", err)
+					f.Stop()
+				}
+			}else{
+				sendChan = f.undeliveredC
+			}
+		}
+		select {
+		case sendChan <- message:
+			sendChan = nil
+			message = nil
+		case <- f.closeChan:
+			break
+		case <- time.Tick(f.waitSecond * time.Second):
+		}
+	}
 }
 
 func (f *FileBeater) String() string {
@@ -147,7 +187,7 @@ func (f *FileBeater) exit()  {
 	f.Logger.Debugf("%s bye", f.String())
 }
 
-func (f *FileBeater) readOne() ([]byte, error) {
+func (f *FileBeater) readOneBlock() ([]byte, error) {
 	var readN int
 	var err error
 	var data []byte
@@ -171,6 +211,7 @@ func (f *FileBeater) readOne() ([]byte, error) {
 	readN, err = io.ReadFull(f.reader, f.blockBuf)
 	// touch eof, pause the beater to wait file changed
 	if err == io.ErrUnexpectedEOF || readN <= 0{
+		return nil, E_EOF
 	}
 	data = make([]byte, readN)
 	if copy(data, f.blockBuf) != readN {
@@ -179,13 +220,13 @@ func (f *FileBeater) readOne() ([]byte, error) {
 	return data, nil
 }
 
-// WaitOneMSG pick up one message from pending messages or the log file
-func (f *FileBeater) WaitOneMSG() (msg *ari.Message, err error) {
+// readOneMSG pick up one message from pending messages or the log file
+func (f *FileBeater) readOneMSG() (msg *ari.Message, err error) {
 	var block []byte
 	for {
 		// no pending msg, try to read from the log file
 		if len(f.pending) <= f.pendingCur {
-			block, err = f.readOne()
+			block, err = f.readOneBlock()
 			if err != nil {
 				return nil, err
 			}
@@ -211,36 +252,25 @@ func (f *FileBeater) WaitOneMSG() (msg *ari.Message, err error) {
 
 func (f *FileBeater) Beating()  {
 	f.Logger.Debugf("%s start beating", f.String())
-	var err error
 	var message *ari.Message
+	var readChan <- chan *ari.Message = f.undeliveredC
 	var sendChan chan <- *ari.Message
 	var doneChan <- chan int
 	for{
-		if message == nil {
-			message, err = f.WaitOneMSG()
-			if err != nil {
-				// got err, stop the beater
-				// todo: maybe i can wait, err may disappear
-				// 可能错误是文件中途变化引起的（比如日志文件被重建）
-				f.Logger.Debugf("%s, fail to wait one msg, err:%v",
-					f.String(), err)
-				f.Stop()
-			}else{
-				sendChan = f.SendChan
-				doneChan = message.DoneChan
-			}
-		}
-
-		// now one log message is prepared
 		select {
+		case message = <- readChan:
+			// message is prepared, setup context to send the msg
+			readChan = nil
+			sendChan = f.SendChan
 		case sendChan <- message:
 			f.sentCnt++
 			// wait response, close sendChan
 			sendChan = nil
+			doneChan = message.DoneChan
 		case <- doneChan:
 			// message send successfully
 			doneChan = nil
-			message = nil
+			readChan = f.undeliveredC
 		case <- f.closeChan:
 			goto exit
 		}

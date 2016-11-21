@@ -72,7 +72,7 @@ func NewOptions(cfg map[string]interface{}) (*Options, error) {
 	if err != nil {
 		return nil, err
 	}
-	_, err = opts.outputGroups()
+	_, err = opts.OutputGroups()
 	if err != nil {
 		return nil, err
 	}

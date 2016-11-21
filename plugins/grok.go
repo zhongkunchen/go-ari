@@ -5,11 +5,14 @@ import "github.com/argpass/go-ari/ari"
 type grok struct {}
 
 func (g *grok) config(conf map[string]interface{})  {
-
 }
 
 func new() *grok {
 	return &grok{}
+}
+
+func (g *grok) DoFilter(msg *ari.Message)bool {
+	return true
 }
 
 func (g *grok) Create(conf map[string]interface{}) ari.Filter {

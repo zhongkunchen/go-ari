@@ -3,13 +3,43 @@ package ari
 import (
 	"github.com/argpass/go-ari/ari/log"
 	"regexp"
+	"sync"
 )
 
+type GroupFilter struct {
+	filters []Filter
+}
+
+func newGroupFilter(optsList []*PluginOptions) *GroupFilter {
+	filters := make([]Filter, len(optsList))
+	for i, opts := range optsList {
+		fi := Filters.get(opts.PluginName)
+		filters[i] = fi
+	}
+	g := &GroupFilter{
+		filters:filters,
+	}
+	return g
+}
+
+func (g *GroupFilter) DoFilter(msg *Message) bool {
+	for _, fi := range g.filters {
+		if fi != nil {
+			if !fi.DoFilter(msg) {
+				break
+			}
+		}
+	}
+	return true
+}
+
 type Worker struct {
+	lock sync.RWMutex
 	ari *Ari
 	id int
 	context *Context
 	Logger *log.Logger
+	groupFilters map[string] Filter
 }
 
 func NewWorker(ari *Ari, id int) *Worker  {
@@ -18,6 +48,7 @@ func NewWorker(ari *Ari, id int) *Worker  {
 		id:id,
 		context:ari.context,
 		Logger:ari.context.Logger,
+		groupFilters:map[string]Filter{},
 	}
 	return w
 }
@@ -26,17 +57,39 @@ func (w *Worker) exit()  {
 	w.Logger.Debugf("[worker#%d] bye", w.id)
 }
 
-// Handle method filters the msg
-func (w *Worker) Handle(msg *Message) (*Message, error) {
-	// todo: filter the msg
+// GetGroupFilter gets or creates a group filter for the name `groupName`
+// got nil, if no filters configured for the source group
+func (w *Worker) GetGroupFilter(groupName string) (Filter, error) {
+	fi, exists := w.groupFilters[groupName]
+	if exists {
+		return fi, nil
+	}
 	groups, err := w.ari.Options().FilterGroups()
 	if err != nil {
 		return nil, err
 	}
-	for _, group := range groups {}
-	msg.GroupName
-	//source := msg.GroupName
-	msg.SetTerm("processed", "worker")
+	for _, group := range groups {
+		reg, err := regexp.Compile(group.Name)
+		if err != nil {
+			return nil, err
+		}
+		if reg.Match([]byte(groupName)) {
+			w.groupFilters[groupName] = Filter(newGroupFilter(group.Plugins))
+		}
+	}
+	w.groupFilters[groupName] = nil
+	return w.GetGroupFilter(groupName)
+}
+
+// Handle method filters the msg
+func (w *Worker) Handle(msg *Message) (*Message, error) {
+	fi, err := w.GetGroupFilter(msg.GroupName)
+	if err != nil {
+		return msg, err
+	}
+	if fi != nil {
+		fi.DoFilter(msg)
+	}
 	return msg, nil
 }
 
@@ -48,7 +101,7 @@ func(w *Worker) DoWork() {
 		select {
 		case msg = <-inputChan:
 			filteredMsg, err := w.Handle(msg)
-		        if err == nil {
+			if err == nil {
 				w.ari.Dispatch(filteredMsg)
 			}else {
 				w.Logger.Errorf("[workder#%d]%v",

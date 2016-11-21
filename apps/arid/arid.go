@@ -42,14 +42,6 @@ var demoJson = `
         ]
     },
     "filter": {
-        "g*": {
-            "grok":{
-                "message":["pattern1", "pattern2"]
-            },
-            "date": {
-                "match": ["request_time", "yyMMdd HH:mm:ss"]
-            }
-        }
     },
 
     "output": {
