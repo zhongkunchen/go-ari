@@ -6,6 +6,7 @@ import (
 	"github.com/argpass/go-ari/ari/log"
 	"fmt"
 	"os"
+	"context"
 )
 
 type Context struct {
@@ -37,6 +38,9 @@ type Ari struct {
 	// messageChan receives log messages from log producer
 	// filter workers receives log messages from messageChan
 	MessageChan chan *Message
+
+	// group name pattern => []Sender
+	senderRegistry map[string] []Sender
 }
 
 // New creates instance of `*Ari`
@@ -44,10 +48,39 @@ func New(opts *Options) *Ari {
 	p := &Ari{
 		closeChan:make(chan int, 1),
 		MessageChan:make(chan *Message, 1),
+		senderRegistry:map[string]Sender{},
 	}
 	p.context = &Context{Ari:p,Opts:opts, Logger:log.GetLogger()}
 	p.opts.Store(opts)
 	atomic.StoreInt32(&p.status, STATUS.UNKNOWN)
+
+	// build senderRegistry
+	outputCfg, err := opts.OutputGroups()
+	if err != nil {
+		panic(err)
+	}
+	// todo: 配置定了输入源已经确定，可以据此来构造对应输入源到输出组的映射,不必在运行时模式匹配
+	for gpName, plgs := range outputCfg {
+		if len(plgs.Plugins) == 0 {
+			continue
+		}
+		var senders []Sender
+		for i, plg := range plgs.Plugins {
+			if senders == nil {
+				senders = make([]Sender, len(plgs.Plugins))
+			}
+			builder := SenderBulders.get(plg.PluginName)
+			if builder == nil {
+				panic(fmt.Errorf("expect sender %s registered", plg.PluginName))
+			}
+			sender, err := builder.Build(p.context, plg.Conf)
+			if err != nil {
+				panic(err)
+			}
+			senders[i] = sender
+		}
+		p.senderRegistry[gpName] = senders
+	}
 	return p
 }
 
@@ -76,11 +109,16 @@ func (p *Ari) Main() {
 	atomic.StoreInt32(&p.status, STATUS.RUNNING)
 }
 
+func (p *Ari) getSenders(groupName string) []Sender {
+	return nil
+}
+
 // Dispatch a msg to all senders
 func (p *Ari) Dispatch(msg *Message){
-	// todo: dispatch the msg to all senders
 	close(msg.DoneChan)
-	p.context.Logger.Debugf("msg<<<%v", msg)
+	for _, sender := range p.getSenders(msg.GroupName) {
+		sender.Send(msg)
+	}
 }
 
 // NotifyStop stop all tasks
