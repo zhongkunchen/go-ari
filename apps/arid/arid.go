@@ -5,6 +5,7 @@ import (
 	"syscall"
 	_ "github.com/argpass/go-ari/plugins"
 	_ "github.com/argpass/go-ari/plugins/file-beater"
+	_ "github.com/argpass/go-ari/plugins/core"
 	"github.com/argpass/go-ari/ari/log"
 	"encoding/json"
 )
@@ -42,7 +43,7 @@ var demoJson = `
         ]
     },
     "filter": {
-        "gw": [
+        "g*": [
             {
 		"plugin": "grok",
 	        "options": {}
@@ -51,19 +52,7 @@ var demoJson = `
     },
 
     "output": {
-        "g*": [{"plugin":"elastisearch", "options": {"a":99}}],
-        "test": [
-            {
-                "plugin":"elastisearch",
-                "options": {
-                     "hosts":["localhost:9010"],
-                     "document_type": "test",
-                     "terms":{
-                         "source": "test-server"
-                     }
-                }
-            }
-        ]
+        "g*": [{"plugin":"stdout", "options": {"a":99}}]
     }
 }
 `

@@ -6,7 +6,7 @@ import (
 	"github.com/argpass/go-ari/ari/log"
 	"fmt"
 	"os"
-	"context"
+	"regexp"
 )
 
 type Context struct {
@@ -39,8 +39,12 @@ type Ari struct {
 	// filter workers receives log messages from messageChan
 	MessageChan chan *Message
 
-	// group name pattern => []Sender
-	senderRegistry map[string] []Sender
+	// sendersMap: input group name => []Sender
+	sendersMap  map[string] []Sender
+	// beatersMap: input group name => []Beater
+	beatersMap  map[string] []Beater
+	// filtersMap: input group name => []Filter
+	filtersMap map[string] []Filter
 }
 
 // New creates instance of `*Ari`
@@ -48,19 +52,101 @@ func New(opts *Options) *Ari {
 	p := &Ari{
 		closeChan:make(chan int, 1),
 		MessageChan:make(chan *Message, 1),
-		senderRegistry:map[string]Sender{},
+		sendersMap:map[string][]Sender{},
+		filtersMap:map[string][]Filter{},
+		beatersMap:map[string][]Beater{},
 	}
 	p.context = &Context{Ari:p,Opts:opts, Logger:log.GetLogger()}
 	p.opts.Store(opts)
 	atomic.StoreInt32(&p.status, STATUS.UNKNOWN)
 
-	// build senderRegistry
-	outputCfg, err := opts.OutputGroups()
+	// setup beaters filters and senders with options
+	p.mustSetupBeaters()
+	p.mustSetupFilters()
+	p.mustSetupSenders()
+	return p
+}
+
+func (p *Ari) mustSetupFilters()  {
+	// build filtersMap
+	cfg, err := p.Options().FilterGroups()
 	if err != nil {
 		panic(err)
 	}
-	// todo: 配置定了输入源已经确定，可以据此来构造对应输入源到输出组的映射,不必在运行时模式匹配
-	for gpName, plgs := range outputCfg {
+	for pattern, plgs := range cfg {
+		if len(plgs.Plugins) == 0 {
+			continue
+		}
+		var filters []Filter
+		for i, plg := range plgs.Plugins {
+			if filters == nil {
+				filters = make([]Filter, len(plgs.Plugins))
+			}
+			builder := FilterBuilders.get(plg.PluginName)
+			if builder == nil {
+				panic(fmt.Errorf("expect filter %s registered", plg.PluginName))
+			}
+			filter, err := builder.Build(p.context, plg.Conf)
+			if err != nil {
+				panic(err)
+			}
+			filters[i] = filter
+		}
+		if len(filters) != len(plgs.Plugins) {
+			panic(fmt.Errorf("build senders fail, cfg:%v", plgs.Plugins))
+		}
+		reg, err := regexp.Compile(pattern)
+		if err != nil {
+			panic(fmt.Errorf("invalid pattern %s", pattern))
+		}
+		// attach to the `beatersMap`
+		for gpName, _ := range p.beatersMap {
+			if reg.Match([]byte(gpName)) {
+				if attached, exists := p.filtersMap[gpName]; !exists {
+					merge := make([]Filter, len(attached) + len(filters))
+					i := copy(merge, attached)
+					copy(merge[i:], filters)
+					p.filtersMap[gpName] = merge
+				}
+			}
+		}
+	}
+}
+
+func (p *Ari) mustSetupBeaters()  {
+	// build beaters
+	cfg, err := p.Options().InputGroups()
+	if err != nil {
+		panic(err)
+	}
+	for gpName, plgs := range cfg {
+		if len(plgs.Plugins) == 0 {
+			continue
+		}
+		var beaters []Beater
+		for i, plg := range plgs.Plugins {
+			if beaters == nil {
+				beaters = make([]Beater, len(plgs.Plugins))
+			}
+			builder := BeaterBuilders.get(plg.PluginName)
+			if builder == nil {
+				panic(fmt.Errorf("expect input plugin %s registered",
+					plg.PluginName))
+			}
+			beater := builder.Build(p.context, plg.Conf, gpName)
+			beaters[i] = beater
+		}
+		p.beatersMap[gpName] = beaters
+	}
+}
+
+func (p *Ari) mustSetupSenders() {
+	// build sendersMap
+	outputCfg, err := p.Options().OutputGroups()
+	if err != nil {
+		panic(err)
+	}
+	for pattern, plgs := range outputCfg {
 		if len(plgs.Plugins) == 0 {
 			continue
 		}
@@ -69,7 +155,7 @@ func New(opts *Options) *Ari {
 			if senders == nil {
 				senders = make([]Sender, len(plgs.Plugins))
 			}
-			builder := SenderBulders.get(plg.PluginName)
+			builder := SenderBuilders.get(plg.PluginName)
 			if builder == nil {
 				panic(fmt.Errorf("expect sender %s registered", plg.PluginName))
 			}
@@ -79,9 +165,25 @@ func New(opts *Options) *Ari {
 			}
 			senders[i] = sender
 		}
-		p.senderRegistry[gpName] = senders
+		if len(senders) != len(plgs.Plugins) {
+			panic(fmt.Errorf("build senders fail, cfg:%v", plgs.Plugins))
+		}
+		reg, err := regexp.Compile(pattern)
+		if err != nil {
+			panic(fmt.Errorf("invalid pattern %s", pattern))
+		}
+		// attach to the `beatersMap`
+		for gpName, _ := range p.beatersMap {
+			if reg.Match([]byte(gpName)) {
+				if attached, exists := p.sendersMap[gpName]; !exists {
+					merge := make([]Sender, len(attached) + len(senders))
+					i := copy(merge, attached)
+					copy(merge[i:], senders)
+					p.sendersMap[gpName] = merge
+				}
+			}
+		}
 	}
-	return p
 }
 
 // Main is the entry to bootstrap Ari
@@ -91,17 +193,12 @@ func (p *Ari) Main() {
 	atomic.StoreInt32(&p.status, STATUS.STARTING)
 
 	// start the input endpoint
-	err := p.startInputGroups()
+	err := p.startBeaters()
 	if err != nil {
 		p.Fatalf("%v", err)
 	}
 	// start workers
-	err = p.startWorkers()
-	if err != nil {
-		p.Fatalf("%v", err)
-	}
-	// start the output endpoint
-	err = p.startOutputGroups()
+	err = p.startFiltering()
 	if err != nil {
 		p.Fatalf("%v", err)
 	}
@@ -110,6 +207,10 @@ func (p *Ari) Main() {
 }
 
 func (p *Ari) getSenders(groupName string) []Sender {
+	senders, exists := p.sendersMap[groupName]
+	if exists {
+		return senders
+	}
 	return nil
 }
 
@@ -139,49 +240,53 @@ func (p *Ari) Fatalf(errMsg string, args ...interface{})  {
 	os.Exit(-1)
 }
 
-// startInputGroups bootstraps all registered message producers
-func (p *Ari) startInputGroups() error {
-	groupsMap , err := p.Options().InputGroups()
-	if err != nil {
-		return err
-	}
-	for _, group := range groupsMap {
-		// start input group
-		p.context.Logger.Debugf("start input group %s", group.Name)
-		for _, pluginOpts := range group.Plugins {
-			// get runner builder with plugin name
-			rb := InputRunnerBuilders.get(pluginOpts.PluginName)
-			if rb == nil {
-				return fmt.Errorf("no such input plugin %s registered",
-					pluginOpts.PluginName)
-			}
-			runner := rb.Build(p.context, pluginOpts.Conf, group.Name)
-			// start plugin in a goroutine
-			p.waitGroup.Add(func(){
-				err := runner.Run()
+// startBeaters bootstraps all registered message producers
+func (p *Ari) startBeaters() error {
+	for _, beaters := range p.beatersMap {
+		for _, beater := range beaters {
+
+			p.waitGroup.WaitGroup.Add(1)
+			go func(bt Beater){
+				defer p.waitGroup.WaitGroup.Done()
+				err := bt.Run()
 				if err != nil {
-					p.Fatalf("[%s]%v", pluginOpts.PluginName, err)
+					p.Fatalf("[%s]%v", err)
 				}
-			})
+			}(beater)
 		}
 	}
 	return nil
 }
 
-// startWorkers starts workers to process log messages
-func (p *Ari) startWorkers() error  {
-	p.context.Logger.Debugf("start workers num %d",
-		p.Options().SysOpts.FilterWorkerN)
-	for i:=1; i<=p.Options().SysOpts.FilterWorkerN; i++ {
-		worker := NewWorker(p, i)
-		p.waitGroup.Add(func(){
-			worker.DoWork()
-		})
+func (p *Ari) doFilters() {
+	var msg *Message
+	var msgChan chan *Message = p.MessageChan
+	for {
+		select {
+		case msg = <- msgChan:
+			filters, _ := p.filtersMap[msg.GroupName]
+			for _, filter := range filters {
+				if !filter.DoFilter(msg) {
+					break
+				}
+			}
+			p.Dispatch(msg)
+		case  <- p.closeChan:
+			goto exit
+		}
 	}
-	return nil
+	exit:
 }
 
-func (p *Ari) startOutputGroups() error  {
+// startFiltering starts workers to process log messages
+func (p *Ari) startFiltering() error  {
+	p.context.Logger.Debugf("start filter worker num %d",
+		p.Options().SysOpts.FilterWorkerN)
+	for i:=1; i<=p.Options().SysOpts.FilterWorkerN; i++ {
+		p.waitGroup.Add(func(){
+			p.doFilters()
+		})
+	}
 	return nil
 }
 

@@ -340,7 +340,7 @@ func (r *BeaterRunner) Run() error  {
 		}
 		// invalid path patterns will be ignored
 	}
-	r.Logger.Debugf("[FBR] is startting %d beaters", len(paths))
+	r.Logger.Debugf("[filebeater] is startting with paths: %v", paths)
 	// pickup one codec config
 	var codecName string
 	var codecOpts map[string]interface{}
@@ -367,10 +367,11 @@ func (r *BeaterRunner) Run() error  {
 	}
 	// bootstrap all beaters
 	for _, beater := range r.beaters {
-		r.group.Add(func(){
-			// bootstrap the beater
-			beater.Beating()
-		})
+		r.group.WaitGroup.Add(1)
+		go func(bt *FileBeater){
+			defer r.group.WaitGroup.Done()
+			bt.Beating()
+		}(beater)
 	}
 	return nil
 }
@@ -397,7 +398,7 @@ func (r *BeaterRunner) Stop()  {
 type inputRunnerBuilder struct {}
 
 func (b *inputRunnerBuilder) Build(ctx *ari.Context,
-	cfg map[string]interface{}, group string) ari.Runner {
+	cfg map[string]interface{}, group string) ari.Beater {
 	br, e := NewBeaterRunner(cfg, ctx, group)
 	if e != nil {
 		panic(e)
@@ -407,5 +408,5 @@ func (b *inputRunnerBuilder) Build(ctx *ari.Context,
 
 func init()  {
 	// register the plugin
-	ari.InputRunnerBuilders.Register("file", &inputRunnerBuilder{})
+	ari.BeaterBuilders.Register("file", &inputRunnerBuilder{})
 }

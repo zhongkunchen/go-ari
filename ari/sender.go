@@ -45,5 +45,5 @@ func (r *senderRegistry) get(name string) (SenderBuilder) {
 }
 
 var (
-	SenderBulders = newSenderRegistry()
+	SenderBuilders = newSenderRegistry()
 )
