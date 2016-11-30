@@ -12,7 +12,7 @@ import (
 	"strings"
 	"github.com/argpass/go-ari/ari/log"
 	"fmt"
-	"time"
+	"github.com/fsnotify/fsnotify"
 )
 
 var E_EOF = errors.New("E_EOF")
@@ -91,11 +91,13 @@ func NewOptions(conf ari.Configuration) (opts *Options, err error) {
 // and sends messages to `messageChan`.
 // a `FileBeater` only watches one log file.
 type FileBeater struct {
+	sync.WaitGroup
 	runner       *BeaterRunner
 	context      *ari.Context
 
 	// SendChan is the channel to send messages
 	SendChan     chan <- *ari.Message
+	readyChan    chan struct{}
 	Logger       *log.Logger
 	Codec        Codec
 	sentCnt      uint64
@@ -112,13 +114,12 @@ type FileBeater struct {
 	FilePath     string
 	readFile     *os.File
 	reader       *bufio.Reader
-	readPos      uint64
+	readPos      int64
 	undeliveredC chan *ari.Message
 
 	// pending messages
 	pending      []*ari.Message
 	pendingCur   int
-	waitSecond   time.Duration
 }
 
 func NewFileBeater(runner *BeaterRunner, path string, startPos int, maxBlockSize uint,
@@ -134,11 +135,40 @@ func NewFileBeater(runner *BeaterRunner, path string, startPos int, maxBlockSize
 		Logger:runner.Logger,
 		closeChan:make(chan int, 1),
 		undeliveredC:make(chan *ari.Message, 1),
-		waitSecond:2,
+		readyChan:make(chan struct{}, 1),
 	}
 	f.blockBuf = make([]byte, f.MaxBlockSize)
-	go f.pump()
+	// subscribe events of the file
+	err := Watcher.EnsureWatch(path, f)
+	if err != nil {
+		panic(err)
+	}
+	f.WaitGroup.Add(1)
+	go func(){
+		defer f.WaitGroup.Done()
+		f.pump()
+	}()
 	return f
+}
+
+var _ CanNotifier = &FileBeater{}
+// Notify implement `CanNotifier` interface
+func (f *FileBeater) Notify(event fsnotify.Event)  {
+	beReady := false
+	if event.Op&fsnotify.Write == fsnotify.Write {
+		beReady = true
+	}
+	if event.Op&fsnotify.Create == fsnotify.Create {
+		beReady = true
+	}
+	if beReady {
+		f.beReady()
+	}
+}
+
+func (f *FileBeater) beReady() {
+	f.reopenFile()
+	f.readyChan <- struct{}{}
 }
 
 func (f *FileBeater) pump()  {
@@ -152,8 +182,8 @@ func (f *FileBeater) pump()  {
 				message = nil
 				// todo: handle E_EOF
 				if err == E_EOF {
-					f.Logger.Debugf("[FB(%s)]E_EOF, wait %d s",
-						f.FilePath, f.waitSecond)
+					f.Logger.Debugf("[FB(%s)]E_EOF, waitting...",
+						f.FilePath)
 				}else {
 					f.Logger.Errorf("Fail to read one msg, err:%v", err)
 					f.Stop()
@@ -168,7 +198,8 @@ func (f *FileBeater) pump()  {
 			message = nil
 		case <- f.closeChan:
 			break
-		case <- time.Tick(f.waitSecond * time.Second):
+		case <- f.readyChan:
+			// continue
 		}
 	}
 }
@@ -187,26 +218,41 @@ func (f *FileBeater) exit()  {
 	f.Logger.Debugf("%s bye", f.String())
 }
 
+func (f *FileBeater) reopenFile() error {
+	f.Logger.Debugf("reopen file, readpos:%d, startpos:%d, blockbuf:%v\n", f.readPos, f.StartPos, string(f.blockBuf))
+	var err error
+	if f.readFile != nil {
+		err = f.readFile.Close()
+		if err != nil {
+			return err
+		}
+	}
+	f.readFile, err = os.OpenFile(f.FilePath, os.O_RDONLY, 0666)
+	if err != nil {
+		return err
+	}
+	if f.StartPos == 0 {
+		// seek to the begin
+		f.readFile.Seek(f.readPos, 0)
+	}else{
+		// seek to the end
+		f.readFile.Seek(0, 2)
+	}
+	f.reader = bufio.NewReader(f.readFile)
+	return nil
+}
+
 func (f *FileBeater) readOneBlock() ([]byte, error) {
 	var readN int
 	var err error
 	var data []byte
-	// open file if necessary
 	if f.readFile == nil {
-		f.readFile, err = os.OpenFile(f.FilePath, os.O_RDONLY, 0666)
+		err = f.reopenFile()
 		if err != nil {
 			return data, err
 		}
-		f.readPos = 0
-		if f.StartPos == 0 {
-			// seek to the begin
-			f.readFile.Seek(0, 0)
-		}else{
-			// seek to the end
-			f.readFile.Seek(0, 2)
-		}
-		f.reader = bufio.NewReader(f.readFile)
 	}
+	// todo: clean blockBuf
 	// read data to buf
 	readN, err = io.ReadFull(f.reader, f.blockBuf)
 	// touch eof, pause the beater to wait file changed
@@ -217,6 +263,7 @@ func (f *FileBeater) readOneBlock() ([]byte, error) {
 	if copy(data, f.blockBuf) != readN {
 		return data, errors.New("copy fail")
 	}
+	f.blockBuf
 	return data, nil
 }
 

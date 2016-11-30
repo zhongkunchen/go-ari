@@ -21,7 +21,7 @@ var demoJson = `
             {
                 "plugin": "file",
                 "options": {
-                    "paths": ["/Users/zkchen/tmp/log/ch_gateway/error.log"],
+                    "paths": ["/Users/zkchen/tmp/t.log"],
                     "tags":["server#1"],
                     "start_position": "beginning",
                     "codec":{

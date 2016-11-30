@@ -18,7 +18,6 @@ func newStd(logger *log.Logger, ctx *ari.Context) *std  {
 }
 
 func (s *std) Send(msg *ari.Message)  {
-	// todo:
 	s.logger.Debugf("[stdout]%v", msg)
 }
 
